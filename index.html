@@ -2,8 +2,8 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}</style>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}[hidden]{display:none!important}</style>
 <title>星あつめの夜</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -48,9 +48,9 @@ body{background:var(--night);color:var(--ink);font-family:var(--round);
 .hint{position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 18px);text-align:center;
   font-size:13px;color:var(--soft);pointer-events:none;transition:opacity 1.2s}
 </style>
+
 </head>
 <body>
-
 <canvas id="sky" aria-label="夜空。流れ星をタップしてつかまえると、星座がうまっていきます"></canvas>
 
 <div class="hud">
@@ -161,10 +161,15 @@ function chime(step,wish){
   });
 }
 function fanfare(){if(!soundOn||!actx)return;[0,2,4,7].forEach((k,i)=>setTimeout(()=>chime(k,false),i*140))}
+function wake(){   // the phone may stop audio while the app sleeps; restart it on the next touch
+  if(soundOn&&actx&&actx.state!=='running')actx.resume().catch(()=>{});
+}
+addEventListener('pointerdown',wake,true);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)wake()});
 $('sound').onclick=e=>{
   e.stopPropagation();soundOn=!soundOn;
   if(soundOn&&!actx){try{actx=new (window.AudioContext||window.webkitAudioContext)()}catch(_){}}
-  if(actx&&actx.state==='suspended')actx.resume();
+  if(actx&&actx.state!=='running')actx.resume().catch(()=>{});
   $('sound').textContent=soundOn?'音 オン':'音 オフ';
   if(soundOn)startBgm();else stopBgm();
 };
