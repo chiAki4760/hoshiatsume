@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0}</style>
+<title>星あつめの夜</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@500;700&family=Kaisei+Decol:wght@700&display=swap">
+<style>
+/* Layout: a full-screen night sky; the constellation being built floats in the upper third, a small glass HUD above it. Single deliberate night look. */
+:root{
+  --night:#0d0b2e; --dusk:#2a1d5c; --gold:#ffd98a; --rose:#ffb3d1;
+  --ink:#f6f1ff; --soft:rgba(246,241,255,.62); --glass:rgba(255,255,255,.08);
+  --round:"Zen Maru Gothic","Hiragino Maru Gothic ProN","Yu Gothic",system-ui,sans-serif;
+  --story:"Kaisei Decol","Hiragino Mincho ProN","Yu Mincho",serif;
+  color-scheme:dark;
+}
+html,body{height:100%;overflow:hidden}
+body{background:var(--night);color:var(--ink);font-family:var(--round);
+  -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+#sky{position:fixed;inset:0;width:100%;height:100%;display:block;cursor:pointer}
+.hud{position:fixed;left:0;right:0;top:0;display:flex;justify-content:space-between;align-items:flex-start;gap:12px;
+  padding-top:calc(env(safe-area-inset-top,0px) + 14px);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));
+  pointer-events:none}
+.count{display:flex;flex-direction:column;gap:2px}
+.count .num{font-family:var(--story);font-size:40px;line-height:1;color:var(--gold);font-variant-numeric:tabular-nums;text-shadow:0 0 18px rgba(255,217,138,.4)}
+.count .lbl{font-size:12px;letter-spacing:.12em;color:var(--soft)}
+.side{display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+.info{font-size:13px;color:var(--soft);text-align:right;line-height:1.5;font-variant-numeric:tabular-nums}
+.info b{color:var(--ink);font-family:var(--story);font-size:16px;font-weight:700}
+.btns{display:flex;gap:8px;pointer-events:auto}
+.btn{font:inherit;font-size:13px;color:var(--ink);background:var(--glass);border:1px solid rgba(255,255,255,.16);
+  border-radius:999px;padding:6px 12px;cursor:pointer;backdrop-filter:blur(6px)}
+.btn:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.toast{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none;
+  opacity:0;transition:opacity .9s ease;font-size:15px;color:var(--soft);line-height:1.8;width:min(90vw,340px)}
+.toast b{display:block;font-family:var(--story);font-size:28px;color:var(--gold);text-shadow:0 0 22px rgba(255,217,138,.55)}
+.toast.show{opacity:1}
+.ev{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(env(safe-area-inset-bottom,0px) + 22px);
+  display:flex;align-items:center;gap:6px;white-space:nowrap;pointer-events:none;
+  font-size:14px;color:var(--ink);background:rgba(20,12,60,.55);border:1px solid rgba(255,217,138,.35);
+  border-radius:999px;padding:7px 16px;backdrop-filter:blur(6px);font-variant-numeric:tabular-nums}
+.ev b{color:var(--gold);font-family:var(--story);font-size:17px}
+.ev .tag{font-size:12px;letter-spacing:.1em;color:var(--night);background:var(--gold);border-radius:999px;padding:2px 8px;margin-right:4px}
+.hint{position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 18px);text-align:center;
+  font-size:13px;color:var(--soft);pointer-events:none;transition:opacity 1.2s}
+</style>
+</head>
+<body>
+
+<canvas id="sky" aria-label="夜空。流れ星をタップしてつかまえると、星座がうまっていきます"></canvas>
+
+<div class="hud">
+  <div class="count"><span class="num" id="score">0</span><span class="lbl">あつめた星</span></div>
+  <div class="side">
+    <div class="info"><b id="cname">ほうき座</b><br><span id="prog">0 / 6</span>・<span id="best">きろく 0</span><br><span id="next">流星群まで あと 50</span></div>
+    <div class="btns">
+      <button class="btn" id="full" type="button">全画面</button>
+      <button class="btn" id="sound" type="button">音 オフ</button>
+      <button class="btn" id="pause" type="button">ひと休み</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<div class="ev" id="ev" hidden><span class="tag">流星群</span>のこり <b id="evt">15</b> 秒・<b id="evn">0</b> こ</div>
+<div class="hint" id="hint">落ちてくる流れ星にふれて、星座をつくりましょう</div>
+
+<script>
+(function(){
+const cv=document.getElementById('sky'),cx=cv.getContext('2d');
+const $=id=>document.getElementById(id);
+const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+let W,H,DPR;
+function size(){DPR=Math.min(devicePixelRatio||1,2);W=innerWidth;H=innerHeight;cv.width=W*DPR;cv.height=H*DPR;cx.setTransform(DPR,0,0,DPR,0,0)}
+addEventListener('resize',size);size();
+
+/* ---- original constellations (x,y in a 0..1 box) ---- */
+const CONS=[
+ {name:'ほうき座',story:'見習い魔女のほうきが、今夜も空のほこりを払っています',pts:[[.15,.2],[.4,.45],[.6,.65],[.55,.92],[.78,.88],[.88,.68]],ln:[[0,1],[1,2],[2,3],[2,4],[2,5]]},
+ {name:'子ねこ座',story:'塔の窓辺で眠る子ねこが、夢の中で星を追いかけています',pts:[[.25,.35],[.33,.08],[.45,.3],[.58,.3],[.7,.08],[.78,.35],[.72,.78],[.32,.78]],ln:[[0,1],[1,2],[2,3],[3,4],[4,5],[5,6],[6,7],[7,0]]},
+ {name:'ティーカップ座',story:'お城の真夜中のお茶会に、月の光がそそがれました',pts:[[.18,.28],[.72,.28],[.64,.82],[.26,.82],[.86,.4],[.86,.64],[.12,.95],[.78,.95]],ln:[[0,1],[1,2],[2,3],[3,0],[1,4],[4,5],[5,2],[6,7]]},
+ {name:'リボン座',story:'姫の髪からほどけたリボンが、風にのって空へ',pts:[[.5,.48],[.12,.18],[.12,.78],[.88,.18],[.88,.78],[.36,.98],[.64,.98]],ln:[[0,1],[1,2],[2,0],[0,3],[3,4],[4,0],[0,5],[0,6]]},
+ {name:'くじら座',story:'夜の海をわたる大きなくじらが、お城に手紙を届けにきました',pts:[[.16,.6],[.32,.36],[.6,.3],[.86,.48],[.78,.78],[.38,.8],[.02,.36],[.03,.86],[.62,.08]],ln:[[0,1],[1,2],[2,3],[3,4],[4,5],[5,0],[0,6],[0,7],[2,8]]}
+];
+let ci=0,lit=0,round=0;          // which constellation, how many points lit, how many cycles done
+function con(){return CONS[ci]}
+
+let score=0,best=0,paused=false,soundOn=false,actx=null;
+try{best=+localStorage.getItem('hoshi-best')||0}catch(e){}
+
+function diff(){
+  const L=round*CONS.length+ci;
+  return{speed:55+L*10,spawn:Math.max(.35,1.2-L*.09),size:Math.max(13,22-L*.7),wish:L>=2?.12:0,max:6+L};
+}
+
+/* ---- layout of the constellation box ---- */
+function box(){
+  const w=Math.min(W-48,340),h=Math.min(w*.62,H*.24);
+  return{x:(W-w)/2,y:Math.max(110,H*.16),w,h};
+}
+function ptPos(i){const b=box(),p=con().pts[i];return{x:b.x+p[0]*b.w,y:b.y+p[1]*b.h}}
+
+/* ---- scenery ---- */
+const dots=[];for(let i=0;i<140;i++)dots.push({x:Math.random(),y:Math.random()*.8,s:.3+Math.random()*1.2,ph:Math.random()*6.28,f:.5+Math.random()*1.5});
+const houses=[];for(let i=0;i<9;i++)houses.push({x:i<4?.02+Math.random()*.06:.42+Math.random()*.55,w:14+Math.random()*16,h:12+Math.random()*16,lit:Math.random()<.7});
+
+/* ---- falling stars, sparkles, fliers ---- */
+let stars=[],sparks=[],fliers=[],trail=[],spawnT=0,t0=performance.now();
+/* ---- big event: the meteor shower ---- */
+const EV_LEN=15,EV_EVERY=50;
+let ev=0,evCaught=0,nextEventAt=EV_EVERY,aurora=0;
+function spawn(){
+  const d=diff();
+  if(ev>0){   // during the shower: many slow, big, colorful stars
+    if(stars.length>=d.max+14)return;
+    stars.push({x:20+Math.random()*(W-40),y:-30,r:d.size*1.25*(.85+Math.random()*.4),
+      vy:d.speed*.6*(.75+Math.random()*.5),vx:40+Math.random()*50,rot:Math.random()*6.28,vr:(Math.random()-.5)*2,
+      wish:false,hue:Math.random()*360,tw:Math.random()*6.28,hist:[]});
+    return;
+  }
+  if(stars.length>=d.max)return;
+  // a rare rainbow star that starts the shower when caught
+  const rainbow=score>=10&&!stars.some(s=>s.rainbow)&&Math.random()<.025;
+  const wish=!rainbow&&Math.random()<d.wish;
+  stars.push({x:20+Math.random()*(W-40),y:-30,r:d.size*(rainbow?1.6:wish?1.35:1)*(.85+Math.random()*.3),
+    vy:d.speed*(rainbow?.55:1)*(.75+Math.random()*.5),vx:(Math.random()-.5)*30,rot:Math.random()*6.28,vr:(Math.random()-.5)*1.5,
+    wish,rainbow,tw:Math.random()*6.28,hist:[]});
+}
+function startEvent(){
+  if(ev>0)return;
+  ev=EV_LEN;evCaught=0;$('evn').textContent=0;$('evt').textContent=EV_LEN;
+  if(score>=nextEventAt-EV_EVERY*.5)nextEventAt+=EV_EVERY;   // a rainbow star also resets the countdown
+  showToast('<b>流星群の夜</b>空いっぱいに星がふってきます。たくさんつかまえて！',3000);
+  if(soundOn&&actx)[0,2,4,5,7].forEach((k,i)=>setTimeout(()=>chime(k,true),i*110));
+  $('ev').hidden=false;
+}
+function endEvent(){
+  ev=0;$('ev').hidden=true;update();
+  try{const b=+localStorage.getItem('hoshi-evbest')||0;if(evCaught>b)localStorage.setItem('hoshi-evbest',evCaught)}catch(e){}
+  showToast('<b>'+evCaught+' こ</b>流星群でつかまえた星の数です',3200);
+  for(let i=0;i<8;i++)setTimeout(launch,200+i*320);
+  fanfare();
+}
+for(let i=0;i<4;i++){spawn();stars[i].y=H*(.35+Math.random()*.4)}
+
+/* ---- sound: little music-box chime ---- */
+const scale=[523.25,587.33,659.25,783.99,880,1046.5,1174.66,1318.5];
+function chime(step,wish){
+  if(!soundOn||!actx)return;
+  const n=actx.currentTime;
+  const notes=wish?[0,2,4].map(k=>scale[(step+k)%scale.length]):[scale[step%scale.length]];
+  notes.forEach((f,i)=>{
+    const o=actx.createOscillator(),g=actx.createGain(),t=n+i*.07;
+    o.type='triangle';o.frequency.value=f;
+    g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(.12,t+.01);g.gain.exponentialRampToValueAtTime(.0001,t+.9);
+    o.connect(g).connect(actx.destination);o.start(t);o.stop(t+1);
+  });
+}
+function fanfare(){if(!soundOn||!actx)return;[0,2,4,7].forEach((k,i)=>setTimeout(()=>chime(k,false),i*140))}
+$('sound').onclick=e=>{
+  e.stopPropagation();soundOn=!soundOn;
+  if(soundOn&&!actx){try{actx=new (window.AudioContext||window.webkitAudioContext)()}catch(_){}}
+  if(actx&&actx.state==='suspended')actx.resume();
+  $('sound').textContent=soundOn?'音 オン':'音 オフ';
+  if(soundOn)startBgm();else stopBgm();
+};
+
+/* ---- background music: an original slow music-box waltz ---- */
+// chords (root, third, fifth) in Hz; melody steps index into each bar's arpeggio
+const BARS=[[261.63,329.63,392],[220,261.63,329.63],[174.61,220,261.63],[196,246.94,293.66],
+            [261.63,329.63,392],[220,261.63,329.63],[174.61,220,261.63],[196,246.94,392]];
+const MEL=[[2,4,3],[1,2,4],[2,1,0],[4,3,2],[2,4,5],[3,2,1],[0,2,1],[2,null,null]];
+let bgmTimer=null,bgmBus=null,nextT=0,bar=0,beat=0;
+const BEAT=.62;
+function note(f,t,len,vol,type){
+  const o=actx.createOscillator(),g=actx.createGain();
+  o.type=type;o.frequency.value=f;
+  g.gain.setValueAtTime(.0001,t);g.gain.exponentialRampToValueAtTime(vol,t+.015);g.gain.exponentialRampToValueAtTime(.0001,t+len);
+  o.connect(g).connect(bgmBus);o.start(t);o.stop(t+len+.05);
+}
+function tick(){
+  if(!actx)return;
+  while(nextT<actx.currentTime+.4){
+    const ch=BARS[bar],arp=[ch[0],ch[1],ch[2],ch[0]*2,ch[1]*2,ch[2]*2];
+    if(beat===0)note(ch[0]/2,nextT,BEAT*3,.07,'sine');               // soft bass on the downbeat
+    const m=MEL[bar][beat];
+    if(m!==null)note(arp[m]*2,nextT,1.4,.045,'triangle');            // music-box melody
+    note(arp[(beat+1)%3],nextT+BEAT/2,.6,.015,'sine');               // faint shimmer
+    nextT+=BEAT;beat++;if(beat>2){beat=0;bar=(bar+1)%BARS.length}
+  }
+}
+function startBgm(){
+  if(!actx||bgmTimer)return;
+  bgmBus=actx.createGain();bgmBus.gain.value=paused?.4:1;bgmBus.connect(actx.destination);
+  nextT=actx.currentTime+.1;bar=0;beat=0;bgmTimer=setInterval(tick,120);tick();
+}
+function stopBgm(){
+  clearInterval(bgmTimer);bgmTimer=null;
+  if(bgmBus){const b=bgmBus;b.gain.setTargetAtTime(0,actx.currentTime,.2);setTimeout(()=>b.disconnect(),900);bgmBus=null}
+}
+
+/* ---- full screen (where the browser allows it) ---- */
+const fullBtn=$('full'),root=document.documentElement;
+const canFull=!!(root.requestFullscreen||root.webkitRequestFullscreen);
+fullBtn.hidden=!canFull;
+fullBtn.onclick=e=>{
+  e.stopPropagation();
+  try{
+    if(document.fullscreenElement||document.webkitFullscreenElement){(document.exitFullscreen||document.webkitExitFullscreen).call(document)}
+    else{const p=(root.requestFullscreen||root.webkitRequestFullscreen).call(root);if(p&&p.catch)p.catch(()=>{fullBtn.hidden=true})}
+  }catch(_){fullBtn.hidden=true}
+};
+document.addEventListener('fullscreenchange',()=>{fullBtn.textContent=document.fullscreenElement?'もどす':'全画面'});
+$('pause').onclick=e=>{
+  e.stopPropagation();paused=!paused;$('pause').textContent=paused?'つづける':'ひと休み';
+  if(!paused)t0=performance.now();
+  if(bgmBus)bgmBus.gain.setTargetAtTime(paused?.4:1,actx.currentTime,.3);
+  showToast(paused?'<b>ひと休み</b>夜空をながめて、深呼吸':'',paused?99999:0);
+};
+
+/* ---- input ---- */
+let hintGone=false,pending=0;
+function tap(px,py){
+  if(paused)return;
+  for(let i=stars.length-1;i>=0;i--){
+    const s=stars[i],dx=px-s.x,dy=py-s.y;
+    if(dx*dx+dy*dy<=(s.r+16)**2){
+      stars.splice(i,1);burst(s.x,s.y,s.wish||s.rainbow||s.hue!=null);
+      if(s.rainbow)for(let k=0;k<30;k++)sparks.push(spark(s.x,s.y,`hsl(${k*12},100%,75%)`,1.6));
+      const n=s.wish?2:1;
+      for(let k=0;k<n;k++){
+        const idx=lit+pending;
+        if(idx<con().pts.length){pending++;fliers.push({x:s.x,y:s.y,sx:s.x,sy:s.y,t:-k*.12,idx,wish:s.wish})}
+      }
+      score+=n;chime(lit+pending,s.wish||s.hue!=null);
+      if(ev>0){evCaught+=n;$('evn').textContent=evCaught}
+      if(s.rainbow)startEvent();
+      else if(ev<=0&&score>=nextEventAt){nextEventAt+=EV_EVERY;startEvent()}
+      update();
+      if(!hintGone){hintGone=true;$('hint').style.opacity=0}
+      return;
+    }
+  }
+  // empty tap: a little wand sparkle
+  for(let i=0;i<5;i++)sparks.push(spark(px,py,'#f6f1ff',.6));
+}
+cv.addEventListener('pointerdown',e=>tap(e.clientX,e.clientY));
+cv.addEventListener('pointermove',e=>{if(e.pointerType==='mouse')trail.push({x:e.clientX,y:e.clientY,life:1})});
+
+function spark(x,y,col,sc){const a=Math.random()*6.28,s=(40+Math.random()*130)*sc;
+  return{x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:1,r:1+Math.random()*2.2,col}}
+function burst(x,y,wish){
+  const cols=wish?['#ffb3d1','#ffd98a','#d9c8ff']:['#ffd98a','#fff3cf'];
+  for(let i=0;i<(wish?26:16);i++)sparks.push(spark(x,y,cols[i%cols.length],1));
+}
+
+function update(){
+  $('score').textContent=score;
+  if(score>best){best=score;try{localStorage.setItem('hoshi-best',best)}catch(e){}}
+  $('best').textContent='きろく '+best;
+  $('cname').textContent=con().name;
+  $('prog').textContent=lit+' / '+con().pts.length;
+  $('next').textContent=ev>0?'流星群の最中！':'流星群まで あと '+Math.max(0,nextEventAt-score);
+}
+let toastTimer;
+function showToast(html,ms){
+  const el=$('toast');clearTimeout(toastTimer);
+  if(!html){el.classList.remove('show');return}
+  el.innerHTML=html;el.classList.add('show');
+  toastTimer=setTimeout(()=>el.classList.remove('show'),ms);
+}
+
+let celebrate=0;
+function complete(){
+  celebrate=4.2;fanfare();
+  const c=con();
+  for(let i=0;i<c.pts.length;i++){const p=ptPos(i);burst(p.x,p.y,true)}
+  for(let i=0;i<6;i++)setTimeout(launch,300+i*480);
+  showToast('<b>'+c.name+'</b>'+c.story,4000);
+  setTimeout(()=>{
+    ci++;if(ci>=CONS.length){ci=0;round++}
+    lit=0;pending=0;fliers=[];update();
+  },4200);
+}
+
+/* ---- fireworks rising from behind the castle ---- */
+let rockets=[];
+const FW=[['#ffd98a','#fff3cf'],['#ffb3d1','#ffe0ee'],['#b9a6ff','#e6ddff'],['#9fe7ff','#e0f8ff']];
+function boom(){
+  if(!soundOn||!actx)return;
+  const n=actx.currentTime,len=1.2,buf=actx.createBuffer(1,actx.sampleRate*len,actx.sampleRate),d=buf.getChannelData(0);
+  for(let i=0;i<d.length;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,3);
+  const s=actx.createBufferSource(),f=actx.createBiquadFilter(),g=actx.createGain();
+  s.buffer=buf;f.type='lowpass';f.frequency.value=700;g.gain.value=.22;
+  s.connect(f).connect(g).connect(actx.destination);s.start(n);
+}
+function launch(){
+  const c=castle();
+  rockets.push({x:c.x+(Math.random()-.5)*c.s*3,y:c.base,vy:-(H*.75+Math.random()*H*.2),
+    ty:H*(.32+Math.random()*.22),col:FW[Math.floor(Math.random()*FW.length)]});
+}
+function explode(r){
+  boom();
+  const n=46,rad=90+Math.random()*60;
+  for(let i=0;i<n;i++){const a=i/n*6.28,s=rad*(.85+Math.random()*.3);
+    sparks.push({x:r.x,y:r.y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:1.4,r:1.4+Math.random()*1.2,col:r.col[i%2],fw:1})}
+}
+
+/* ---- the castle: an original hilltop palace ---- */
+function hill(x){return H*.86-Math.sin(x/W*3.2+.6)*H*.04}
+function castle(){const x=W*.24,s=Math.min(W,H)*.045;return{x,s,base:hill(x)+2}}
+function drawCastle(t){
+  const {x,s,base}=castle();
+  cx.save();
+  // soft glow around the palace
+  const gl=cx.createRadialGradient(x,base-s*3,0,x,base-s*3,s*9);
+  gl.addColorStop(0,`rgba(255,200,140,${.18+(celebrate>0?.12:0)})`);gl.addColorStop(1,'rgba(255,200,140,0)');
+  cx.fillStyle=gl;cx.fillRect(x-s*9,base-s*12,s*18,s*12);
+  cx.fillStyle='#140d36';
+  const tower=(cxp,w,h,roof)=>{
+    cx.fillRect(cxp-w/2,base-h,w,h);
+    cx.beginPath();cx.moveTo(cxp-w/2-s*.15,base-h);cx.lineTo(cxp,base-h-roof);cx.lineTo(cxp+w/2+s*.15,base-h);cx.fill();
+    return base-h-roof;
+  };
+  // wall with crenellations
+  cx.fillRect(x-s*3.2,base-s*1.6,s*6.4,s*1.6);
+  for(let i=0;i<7;i++)cx.fillRect(x-s*3.2+i*s*1,base-s*1.95,s*.45,s*.4);
+  // towers of different heights
+  tower(x-s*3.1,s*1.1,s*3,s*1.4);
+  tower(x+s*3.2,s*.9,s*2.4,s*1.1);
+  tower(x-s*1.2,s*1.3,s*4.2,s*1.7);
+  const top=tower(x+s*.6,s*1.6,s*5.2,s*2.2);
+  // round dome turret
+  cx.fillRect(x+s*1.9,base-s*3.4,s*.8,s*3.4);
+  cx.beginPath();cx.arc(x+s*2.3,base-s*3.4,s*.42,Math.PI,0);cx.fill();
+  // pennant on the tallest tower
+  cx.strokeStyle='#140d36';cx.lineWidth=1.5;cx.beginPath();cx.moveTo(x+s*.6,top);cx.lineTo(x+s*.6,top-s*.9);cx.stroke();
+  cx.fillStyle='#ffb3d1';cx.beginPath();cx.moveTo(x+s*.6,top-s*.9);
+  cx.lineTo(x+s*.6+s*.75,top-s*.75+Math.sin(t*3)*s*.08);cx.lineTo(x+s*.6,top-s*.58);cx.fill();
+  // lit windows that flicker gently
+  const win=[[x+s*.6,base-s*4],[x+s*.6,base-s*2.7],[x-s*1.2,base-s*3.2],[x-s*3.1,base-s*2.2],[x+s*3.2,base-s*1.8],[x+s*2.3,base-s*2.6]];
+  win.forEach((w,i)=>{cx.fillStyle=`rgba(255,214,140,${.7+.25*Math.sin(t*1.7+i*2)})`;
+    cx.beginPath();cx.moveTo(w[0]-s*.18,w[1]+s*.4);cx.lineTo(w[0]-s*.18,w[1]);cx.arc(w[0],w[1],s*.18,Math.PI,0);cx.lineTo(w[0]+s*.18,w[1]+s*.4);cx.fill()});
+  // gate
+  cx.fillStyle='rgba(255,200,120,.55)';cx.beginPath();cx.moveTo(x-s*.45,base);cx.lineTo(x-s*.45,base-s*.7);
+  cx.arc(x,base-s*.7,s*.45,Math.PI,0);cx.lineTo(x+s*.45,base);cx.fill();
+  cx.restore();
+}
+
+/* ---- drawing ---- */
+function starPath(x,y,r,rot){
+  cx.beginPath();
+  for(let i=0;i<10;i++){const a=rot+i*Math.PI/5-Math.PI/2,rr=i%2?r*.45:r;
+    cx.lineTo(x+Math.cos(a)*rr,y+Math.sin(a)*rr)}
+  cx.closePath();
+}
+function scenery(t){
+  const g=cx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#0d0b2e');g.addColorStop(.6,'#2a1d5c');g.addColorStop(1,'#5a3a7a');
+  cx.fillStyle=g;cx.fillRect(0,0,W,H);
+  for(const d of dots){cx.globalAlpha=.35+.45*Math.sin(t*d.f+d.ph)**2;cx.fillStyle='#fff';
+    cx.beginPath();cx.arc(d.x*W,d.y*H,d.s,0,6.28);cx.fill()}
+  cx.globalAlpha=1;
+  // aurora curtains during the meteor shower
+  if(aurora>0){
+    cx.save();cx.globalCompositeOperation='lighter';
+    const cols=[[140,255,200],[180,140,255],[255,150,210]];
+    cols.forEach((c,k)=>{
+      const yb=H*(.22+k*.09);
+      const ag=cx.createLinearGradient(0,yb-H*.16,0,yb+H*.08);
+      ag.addColorStop(0,`rgba(${c},0)`);ag.addColorStop(.6,`rgba(${c},${.16*aurora})`);ag.addColorStop(1,`rgba(${c},0)`);
+      cx.fillStyle=ag;cx.beginPath();cx.moveTo(0,yb+H*.1);
+      for(let x=0;x<=W;x+=16)cx.lineTo(x,yb+Math.sin(x/W*5+t*(.5+k*.2)+k*2)*H*.05-H*.12);
+      for(let x=W;x>=0;x-=16)cx.lineTo(x,yb+Math.sin(x/W*4+t*(.4+k*.15)+k)*H*.04+H*.06);
+      cx.fill();
+    });
+    cx.restore();
+  }
+  // crescent moon
+  const mx=W*.82,my=H*.42,mr=Math.min(W,H)*.06;
+  cx.save();cx.shadowColor='rgba(255,236,190,.6)';cx.shadowBlur=30;cx.fillStyle='#fff0c8';
+  cx.beginPath();cx.arc(mx,my,mr,0,6.28);cx.fill();cx.restore();
+  cx.fillStyle='#24195a';cx.beginPath();cx.arc(mx+mr*.42,my-mr*.22,mr*.92,0,6.28);cx.fill();
+  // hills and a little town
+  cx.fillStyle='#1a1240';cx.beginPath();cx.moveTo(0,H);
+  for(let x=0;x<=W;x+=12)cx.lineTo(x,H*.86-Math.sin(x/W*3.2+.6)*H*.04);
+  cx.lineTo(W,H);cx.fill();
+  drawCastle(t);
+  for(const h of houses){const x=h.x*W,base=H*.86-Math.sin(x/W*3.2+.6)*H*.04+2;
+    cx.fillStyle='#120c30';cx.fillRect(x,base-h.h,h.w,h.h);
+    cx.beginPath();cx.moveTo(x-3,base-h.h);cx.lineTo(x+h.w/2,base-h.h-h.w*.55);cx.lineTo(x+h.w+3,base-h.h);cx.fill();
+    if(h.lit){cx.fillStyle='rgba(255,210,130,.85)';cx.fillRect(x+h.w*.35,base-h.h*.62,h.w*.3,h.h*.3)}}
+}
+function drawConstellation(t){
+  const c=con(),pts=c.pts.map((_,i)=>ptPos(i));
+  const glow=celebrate>0?1:0;
+  // lines between lit points
+  cx.lineWidth=1.4;
+  for(const [a,b] of c.ln){
+    const on=a<lit&&b<lit;
+    cx.strokeStyle=on?`rgba(255,217,138,${.55+glow*.4})`:'rgba(246,241,255,.12)';
+    cx.setLineDash(on?[]:[3,5]);
+    cx.beginPath();cx.moveTo(pts[a].x,pts[a].y);cx.lineTo(pts[b].x,pts[b].y);cx.stroke();
+  }
+  cx.setLineDash([]);
+  pts.forEach((p,i)=>{
+    if(i<lit){
+      cx.save();cx.shadowColor='#ffd98a';cx.shadowBlur=14+glow*10;cx.fillStyle='#ffe9b8';
+      starPath(p.x,p.y,6+Math.sin(t*3+i)*.8+glow*2,t*.3);cx.fill();cx.restore();
+    }else{
+      cx.strokeStyle='rgba(246,241,255,.35)';cx.lineWidth=1;
+      cx.beginPath();cx.arc(p.x,p.y,4,0,6.28);cx.stroke();
+    }
+  });
+}
+function drawFalling(s,t){
+  // tail
+  const hue=s.rainbow?(t*160+s.tw*50)%360:s.hue;
+  const col=hue!=null?`hsl(${hue},100%,76%)`:s.wish?'#ffb3d1':'#ffd98a';
+  for(let i=0;i<s.hist.length;i++){const h=s.hist[i],a=i/s.hist.length;
+    cx.globalAlpha=a*(s.rainbow?.6:.35);cx.fillStyle=s.rainbow?`hsl(${(hue+i*25)%360},100%,75%)`:col;
+    cx.beginPath();cx.arc(h.x,h.y,s.r*.35*a,0,6.28);cx.fill()}
+  cx.globalAlpha=1;
+  cx.save();cx.shadowColor=col;cx.shadowBlur=(s.rainbow?32:18)+Math.sin(t*6+s.tw)*6;
+  const g=cx.createRadialGradient(s.x,s.y,0,s.x,s.y,s.r);
+  g.addColorStop(0,'#fffaf0');g.addColorStop(1,col);
+  cx.fillStyle=g;starPath(s.x,s.y,s.r,s.rot);cx.fill();cx.restore();
+}
+
+function frame(now){
+  let dt=Math.min(.05,(now-t0)/1000);t0=now;const t=now/1000;
+  if(paused)dt=0;if(reduce)dt*=.6;
+  const d=diff();
+  if(celebrate>0)celebrate-=dt;
+  if(ev>0){ev-=dt;$('evt').textContent=Math.max(0,Math.ceil(ev));if(ev<=0)endEvent()}
+  aurora+=((ev>0?1:0)-aurora)*Math.min(1,dt*1.2);
+  spawnT-=dt;
+  if(spawnT<=0&&!paused&&(celebrate<=0||ev>0)){spawn();spawnT=ev>0?.09+Math.random()*.1:d.spawn*(.6+Math.random()*.8)}
+  for(let i=stars.length-1;i>=0;i--){const s=stars[i];
+    s.hist.push({x:s.x,y:s.y});if(s.hist.length>12)s.hist.shift();
+    s.y+=s.vy*dt;s.x+=s.vx*dt+Math.sin(t*1.5+s.tw)*12*dt;s.rot+=s.vr*dt;
+    if(s.y>H*.9+s.r)stars.splice(i,1);}           // gently gone; no penalty
+  for(let i=fliers.length-1;i>=0;i--){const f=fliers[i];f.t+=dt/.75;
+    if(f.t>=1){fliers.splice(i,1);lit++;pending--;update();
+      if(lit>=con().pts.length&&celebrate<=0)complete();continue}
+    if(f.t>0){const p=ptPos(f.idx),e=1-(1-f.t)**3;
+      f.x=f.sx+(p.x-f.sx)*e;f.y=f.sy+(p.y-f.sy)*e-Math.sin(f.t*Math.PI)*60;
+      sparks.push({x:f.x,y:f.y,vx:0,vy:0,life:.6,r:1.6,col:f.wish?'#ffb3d1':'#ffd98a'})}}
+  for(let i=sparks.length-1;i>=0;i--){const p=sparks[i];p.life-=dt*1.6;
+    p.x+=p.vx*dt;p.y+=p.vy*dt;p.vx*=.93;p.vy=p.vy*.93+20*dt;if(p.life<=0)sparks.splice(i,1)}
+  for(let i=trail.length-1;i>=0;i--){trail[i].life-=dt*3;if(trail[i].life<=0)trail.splice(i,1)}
+
+  for(let i=rockets.length-1;i>=0;i--){const r=rockets[i];r.y+=r.vy*dt;r.vy*=.985;
+    sparks.push({x:r.x+(Math.random()-.5)*2,y:r.y,vx:0,vy:20,life:.5,r:1.1,col:r.col[1]});
+    if(r.y<=r.ty){explode(r);rockets.splice(i,1)}}
+
+  scenery(t);
+  drawConstellation(t);
+  for(const s of stars)drawFalling(s,t);
+  for(const f of fliers)if(f.t>0){cx.save();cx.shadowColor='#ffd98a';cx.shadowBlur=16;cx.fillStyle='#fff3cf';starPath(f.x,f.y,7,t*4);cx.fill();cx.restore()}
+  for(const p of sparks){cx.globalAlpha=Math.max(0,p.life);cx.fillStyle=p.col;starPath(p.x,p.y,p.r*1.6,p.life*4);cx.fill()}
+  for(const p of trail){cx.globalAlpha=p.life*.6;cx.fillStyle='#fff3cf';cx.beginPath();cx.arc(p.x,p.y,1.6,0,6.28);cx.fill()}
+  cx.globalAlpha=1;
+  requestAnimationFrame(frame);
+}
+update();
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
